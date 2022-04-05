@@ -1,3 +1,5 @@
-# Unification
+# Unify
 
-A polymorphic, substitution-passing, recursion-free unification algorithm based on disjoint sets.
+A generic, rewrite-free, recursion-free unification algorithm based on disjoint sets.
+
+Primarily for learning Rust. 
