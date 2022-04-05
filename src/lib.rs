@@ -350,5 +350,67 @@ mod tests {
 
         /* Unification with differing variables */
         expect_unify(&al5, &al6, true);
+
+        /* Deeper substitutions */
+        let al7: ALProgram = UnifTerm::Val {
+            value: TermNode {
+                data: 'd',
+                children: vec![
+                    Box::new(UnifTerm::Val {
+                        value: (TermNode {
+                            data: 'c',
+                            children: vec![Box::new(UnifTerm::Var { value: 1 })],
+                        }),
+                    }),
+                    Box::new(UnifTerm::Var { value: 2 }),
+                    Box::new(UnifTerm::Var { value: 1 }),
+                ],
+            },
+        };
+
+        let al8: ALProgram = UnifTerm::Val {
+            value: TermNode {
+                data: 'd',
+                children: vec![
+                    Box::new(UnifTerm::Var { value: 3 }),
+                    Box::new(UnifTerm::Var { value: 1 }),
+                    Box::new(UnifTerm::Val {
+                        value: (TermNode {
+                            data: 'a',
+                            children: vec![],
+                        }),
+                    }),
+                ],
+            },
+        };
+        // AL7 = d(c(1), 2, 1)
+        // AL8 = d(3, 1, a)
+        // MGU should be d(c(a), a, a)
+        expect_unify(&al7, &al8, true);
+
+        let al9: ALProgram = UnifTerm::Val {
+            value: TermNode {
+                data: 'd',
+                children: vec![
+                    Box::new(UnifTerm::Val {
+                        value: (TermNode {
+                            data: 'c',
+                            children: vec![Box::new(UnifTerm::Var { value: 1 })],
+                        }),
+                    }),
+                    Box::new(UnifTerm::Var { value: 3 }),
+                    Box::new(UnifTerm::Var { value: 1 }),
+                ],
+            },
+        };
+
+        // AL9 = d(c(1), 3, 1)
+        // AL8 = d(3, 1, a)
+        // Should not unify, since c(1) = 3 = 1 = a
+        expect_unify(&al9, &al8, false);
+
+        /* Mal-airity terms */
+
+        /* Infinite terms */
     }
 }
