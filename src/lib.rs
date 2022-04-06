@@ -3,26 +3,26 @@
 #![allow(unused_mut)]
 #![allow(unused_imports)]
 
+use std::collections::HashMap;
+use std::string;
+
 use either::{Either, Left, Right};
 
 type UnifVar = usize;
 
-struct Language<T> {
-    syntax: Vec<TermData<T>>,
-}
-
+#[derive(Clone, Copy)]
 struct TermData<T> {
     arity: u8,
     data: T,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct TermNode<T> {
     data: T,
     children: Vec<Box<UnifTerm<T>>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum UnifTerm<T> {
     Val { value: TermNode<T> },
     Var { value: UnifVar },
@@ -80,6 +80,21 @@ impl<'a, T> Substitution<'a, T> {
             ret.indices.push(Right(i));
         }
         return ret;
+    }
+
+    /* TESTING ONLY: Find the parent without path compression */
+    pub fn find_parent_pure(&self, n: usize) -> Either<&'a T, usize> {
+        let mut r = n;
+        let mut stale: Vec<usize> = vec![];
+
+        while let Right(i) = self.indices[r] {
+            if i == r {
+                break;
+            }
+            stale.push(r);
+            r = i;
+        }
+        return self.indices[r];
     }
 
     /*
@@ -155,34 +170,43 @@ impl<'a, T> Substitution<'a, TermNode<T>> {
     }
 }
 
+#[allow(unused_must_use)]
 impl<T: Copy> Substitution<'_, TermNode<T>> {
     /*
      * Runs a substitution on a term, perfoming the rewrite and allocating a new experssion
+     *
+     * TODO: Write away this recursion (mutable trees are hard)
+     * TODO: Should I bring back mutability?
      */
     pub fn rewrite_term(&mut self, t: &UnifTerm<T>) -> UnifTerm<T> {
-        // let mut ret = t.clone();
-        // let mut stale: Vec<&UnifTerm<T>> = vec![&ret];
-        // while let Some(ut) = stale.pop() {
-        //     match ut {
-        //         UnifTerm::Val { value } => {
-        //             for k in &value.children {
-        //                 stale.push(k.as_ref());
-        //             }
-        //         }
-        //         UnifTerm::Var { value } => {
-        //             match self.find(*value) {
-        //                 Left(n) => {
-        //                     std::mem::replace(&mut ut, &UnifTerm::Val { value: n.clone() });
-        //                 }
-        //                 Right(v) => {
-        //                     todo!();
-        //                 }
-        //             }
-        //             // *ut = self.
-        //         }
-        //     }
-        // }
-        todo!();
+        match t {
+            UnifTerm::Val { value } => {
+                let rewrite_children = value
+                    .children
+                    .iter()
+                    .map(|c| self.rewrite_term(c))
+                    .map(|b| Box::new(b))
+                    .collect();
+                return UnifTerm::Val {
+                    value: TermNode {
+                        data: value.data,
+                        children: rewrite_children,
+                    },
+                };
+            }
+            UnifTerm::Var { value } => {
+                // TODO! Do we need to iteratively substitute? I don't think our map tracks
+                // Internal changes in it's store... look into this
+                match self.find(*value - 1) {
+                    Left(n) => {
+                        // return UnifTerm::Val { value: n.clone() };
+                        // ... yikes
+                        return self.rewrite_term(&UnifTerm::Val { value: n.clone() });
+                    }
+                    Right(n) => return UnifTerm::Var { value: n },
+                }
+            }
+        };
     }
 }
 
@@ -228,9 +252,16 @@ mod tests {
     use super::*;
 
     /* Basic yes/no test to see check if two terms unify or don't */
-    fn expect_unify<T: Eq>(t1: &UnifTerm<T>, t2: &UnifTerm<T>, unifies: bool) {
+    fn expect_unify<T: core::fmt::Debug + Copy + Eq + PartialEq>(
+        t1: &UnifTerm<T>,
+        t2: &UnifTerm<T>,
+        unifies: bool,
+    ) {
         match unify(t1, t2) {
-            Ok(_) => assert!(unifies, "Expected terms to unify"),
+            Ok(mut sigma) => {
+                assert!(unifies, "Expected terms to unify");
+                assert_eq!(sigma.rewrite_term(t1), sigma.rewrite_term(t2));
+            }
             Err(_) => assert!(!unifies, "Expected terms to not unify"),
         }
     }
@@ -257,27 +288,28 @@ mod tests {
          *  - UnifVars are usize
          *  - UnifVars are sequential, starting at 1.
          */
-        let alphabet_lang: Language<char> = Language {
-            syntax: vec![
-                TermData {
-                    arity: 0,
-                    data: 'a',
-                },
-                TermData {
-                    arity: 0,
-                    data: 'b',
-                },
-                TermData {
-                    arity: 1,
-                    data: 'c',
-                },
-                TermData {
-                    arity: 3,
-                    data: 'd',
-                },
-            ],
-        };
-
+        /*
+               let alphabet_lang: Language<char> = Language {
+                   syntax: vec![
+                       TermData {
+                           arity: 0,
+                           data: 'a',
+                       },
+                       TermData {
+                           arity: 0,
+                           data: 'b',
+                       },
+                       TermData {
+                           arity: 1,
+                           data: 'c',
+                       },
+                       TermData {
+                           arity: 3,
+                           data: 'd',
+                       },
+                   ],
+               };
+        */
         type ALProgram = UnifTerm<char>;
 
         let al1: ALProgram = UnifTerm::Var { value: 1 };
@@ -332,9 +364,11 @@ mod tests {
         expect_unify(&al1, &al1, true);
         expect_unify(&al1, &al2, true);
         expect_unify(&al1, &al3, true);
-        expect_unify(&al1, &al4, true);
-        expect_unify(&al1, &al5, true);
-        expect_unify(&al1, &al6, true);
+
+        // OCCURS CHECK! THESE MAKE INFINITE TREES! DUMBASS!
+        // expect_unify(&al1, &al4, true);
+        // expect_unify(&al1, &al5, true);
+        // expect_unify(&al1, &al6, true);
 
         /* Simple atom comparison should inly unify with itself */
         expect_unify(&al2, &al2, true);
@@ -408,9 +442,5 @@ mod tests {
         // AL8 = d(3, 1, a)
         // Should not unify, since c(1) = 3 = 1 = a
         expect_unify(&al9, &al8, false);
-
-        /* Mal-airity terms */
-
-        /* Infinite terms */
     }
 }
